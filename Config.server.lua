@@ -115,6 +115,7 @@ local Config = {
 			
 			OutsideBoarding 			= 	Bus.Main.one,				-- Invisible, non-collide part outside the doors.
 														-- Passengers stand here when waiting to board.
+														-- The top of this part should be at their feet.
 			
 			InsideBoarding 				= 	Bus.Main.two,				-- Part by the driver's cab.
 			
