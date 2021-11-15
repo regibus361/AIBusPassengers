@@ -5,7 +5,7 @@ local Enabled = true -- Quickly turn all AI passengers off.
 
 
 
-Script version:		1.0.10 (10th Nov 2021)
+Script version:		1.0.11 (10th Nov 2021)
 
 --Changelog
 -------------------------
@@ -996,7 +996,7 @@ local function BoardBus(Passenger, Bus, Stop)
 
 	-- Events for accepting and rejecting
 	local AcceptButton = Ticketing.Accept.MouseButton1Down:Connect(Accept)
-	local DenyButton = Ticketing.Deny.MouseButton1Down:Connect(Accept)
+	local DenyButton = Ticketing.Deny.MouseButton1Down:Connect(Deny)
 	local KeypressEvent = Config.Misc.KeypressEvent.OnServerEvent:Connect(function(Player, Key)
 		if Player == Driver then
 			if Key == Config.Keybinds.AcceptTicket then
