@@ -1,6 +1,6 @@
 --[[
 
-Script version:		1.0.10 (10th Nov 2021)
+Script version:		1.0.11 (15th Nov 2021)
 
 This module creates and manages AI passengers that can ride buses. It could also easily be adapted for other vehicles.
 This is the short documentation that only goes through how to use this module, not how it works.
@@ -60,75 +60,78 @@ If you need help with any of this, don't hesitate to contact me so I can help yo
 
 
 
-local Module = game.ServerScriptService.AIBusPassengers			-- Where you're keeping the main ModuleScript.
-local s = game.Workspace.BusStops		-- The folder you keep all your bus stops in. 
-										-- By 'bus stops' I mean detectors and waiting areas,
-										-- although the folder can be shared with the stop models themselves.
-										-- Has to be defined outside so we can reference within.
+local Module = game.ServerScriptService.AIBusPassengers								-- Where you're keeping the main ModuleScript.
+local s = game.Workspace.BusStops										-- The folder you keep all your bus stops in. 
+														-- By 'bus stops' I mean detectors and waiting areas,
+														-- although the folder can be shared with the stop models themselves.
+														-- Has to be defined outside so we can reference within.
 
 local Config = {
 	Folders = {
-		Stops						=	s,										-- Folder in Workspace containing all bus stops.
-																				-- This doesn't actually need to include the stops,
-																				-- it just needs the two parts described above.
+		Stops						=	s,					-- Folder in Workspace containing all bus stops.
+														-- This doesn't actually need to include the stops,
+														-- it just needs the two parts described above.
 		
 		Avatars 					= 	game.ServerStorage.AIPassengerAvatars,	-- A folder in ServerStorage containing avatars.
-																				-- I recommend using R6 for optimisation.
-																				-- However, the module is fine with all types.
+														-- I recommend using R6 for optimisation.
+														-- However, the module is fine with all types.
 		
-		Buses 						= 	game.Workspace.Buses,					-- Where your buses are in the workspace.
-		IsBus						=	function(_)								-- If there are other objects in the above location,
-			return true															-- use this function to check if one is a bus.
-		end,																	-- For example, if your buses' names end '_bus':
-																				-- return string.sub(Object.Name, -4) == '_bus'
+		Buses 						= 	game.Workspace.Buses,			-- Where your buses are in the workspace.
+		IsBus						=	function(_)				-- If there are other objects in the above location,
+			return true										-- use this function to check if one is a bus.
+		end,												-- For example, if your buses' names end '_bus':
+														-- return string.sub(Object.Name, -4) == '_bus'
 		
-		IncompatibleBuses			=	game.Workspace							-- Backup folder for buses that aren't set up.
-	},																			-- (You'll get a warning in output if a bus isn't.)
+		IncompatibleBuses				=	game.Workspace				-- Backup folder for buses that aren't set up properly.
+	},													-- (You'll get a warning in output if a bus isn't.)
 	
 	
 	GetBusLocation = function(Bus, Location)
 		if Location == 'FromTrigger' then
-			return 						Bus.Parent.Parent						-- The location of a bus, where 'Bus' is the trigger
+			return 						Bus.Parent.Parent			-- The location of a bus, where 'Bus' is the trigger
 		end
 		
 		local Locations = {
-			Main					=	Bus.Main,								-- Main area
+			Main					=	Bus.Main,				-- Main area
 			
-			RouteCode 				= 	Bus.Values.destn,						-- RouteCode object in a bus.
-																				-- Your dest system needs to change this.
-																				-- RouteCodes must be unique to each route.
+			RouteCode 				= 	Bus.Values.destn,			-- RouteCode object in a bus.
+														-- Your dest system needs to change this.
+														-- RouteCodes must be unique to each route.
+														-- Do NOT include the .Value!
 			
-			FrontDoorsOpen 			= 	Bus.Main.hDoor.hdoor,			-- A BoolValue for if the FRONT doors are open.
-			RearDoorsOpen			=	Bus.Main.hDoor.hdoor,				-- And the rear doors.
+			FrontDoorsOpen 				= 	Bus.Main.hDoor.hdoor,			-- A BoolValue for if the FRONT doors are open.
+			RearDoorsOpen				=	Bus.Main.hDoor.hdoor,			-- And the rear doors.
 			
-			Seats 					= 	Bus.Main.seats,							-- A model or folder containing your seats.
-																				-- This should be Seat objects only.
-																				-- Parts and so on for seat models cannot be here.
-																				-- However, they can be INSIDE the Seat objects.
+			Seats 					= 	Bus.Main.seats,				-- A model or folder containing your seats.
+														-- This should be Seat objects only.
+														-- Parts and so on for seat models cannot be here.
+														-- However, they can be INSIDE the Seat objects.
 			
-			StandingSpaces 			= 	Bus.Main.StandingSpaces,				-- Standing spaces are Seats too, but for standing in.
-																				-- The module makes them invisible and non-collide.
-																				-- The seat animation isn't played in these seats.
-																				-- They should be about 3 studs off the ground.
-																				-- You may have to test to find the right height.
+			StandingSpaces 				= 	Bus.Main.StandingSpaces,		-- Standing spaces are Seats too, but for standing in.
+														-- The module makes them invisible and non-collide.
+														-- The seat animation isn't played in these seats.
+														-- They should be about 3 studs off the ground.
+														-- You may have to test to find the right height.
 			
-			OutsideBoarding 		= 	Bus.Main.one,		-- Invisible, non-collide part outside the doors.
-																				-- Passengers stand here when waiting to board.
+			OutsideBoarding 			= 	Bus.Main.one,				-- Invisible, non-collide part outside the doors.
+														-- Passengers stand here when waiting to board.
+														-- The top of this part should be at their feet.
 			
-			InsideBoarding 			= 	Bus.Main.two,			-- Part by the driver's cab.
+			InsideBoarding 				= 	Bus.Main.two,				-- Part by the driver's cab.
 			
-			FinalBoarding 			= 	Bus.Main.three,			-- Passengers walk here from the IBP.
-																				-- From here, the passengers teleport to their seats.
+			FinalBoarding 				= 	Bus.Main.three,				-- Passengers walk here from the IBP.
+														-- From here, the passengers teleport to their seats.
 			
-			OutsideAlighting		=	Bus.Main.three,		-- Reverse points for the above.
-																				-- For single door buses, use the same parts.
-			InsideAlighting			=	Bus.Main.two,
+			OutsideAlighting			=	Bus.Main.one,				-- Reverse points for the above.
+														-- For single door buses, use the same parts.
+														-- Slightly confusing - you START from Final alighting
+			InsideAlighting				=	Bus.Main.two,
 			
-			FinalAlighting			=	Bus.Main.one,			
+			FinalAlighting				=	Bus.Main.three,			
 			
-			Trigger 				= 	Bus.Main.maintrig,				-- The trigger part at the front of the bus.
+			Trigger 				= 	Bus.Main.maintrig,			-- The trigger part at the front of the bus.
 			
-			DrivingSeat 			= 	Bus.DriveSeat,							-- The driving seat. Need I say more?
+			DrivingSeat 				= 	Bus.DriveSeat,				-- The driving seat. Need I say more?
 		}
 		return Locations[Location]
 	end,
@@ -136,73 +139,73 @@ local Config = {
 	
 	GetStopLocation = function(Stop, Location)
 		if Location == 'FromDetector' then
-			return 						Stop.Parent								-- The stop, where Stop is a detector.
+			return 						Stop.Parent				-- The stop, where Stop is a detector.
 		end
 		local Locations = {
-			Detector 				= 	Stop.detector,							-- The detector's location in a stop.
-																				-- This should cover the whole stop area!
+			Detector 				= 	Stop.detector,				-- The detector's location in a stop.
+														-- This should cover the whole stop area!
 			
-			WaitingArea 			= 	Stop.waitarea,							-- The area passengers wait in.
+			WaitingArea 				= 	Stop.waitarea,				-- The area passengers wait in.
 		}
 		return Locations[Location]
 	end,
 	
 	
-	TriggerName 					= 	'BusTriggerPart',						-- The NAME of bus triggers.
-																				-- Make sure this is unique!
-																				-- i.e. no other parts should be named this.
+	TriggerName 						= 	'BusTriggerPart',			-- The NAME of bus triggers.
+														-- Make sure this is unique!
+														-- i.e. no other parts should be named this.
 	
-	DetectorName 					= 	'BusDetector',							-- Name of detectors. Also unique.
+	DetectorName 						= 	'BusDetector',				-- Name of detectors. Also unique.
 	
 	
 	Movement = {
-		SignificantDistance		 	= 	0.15,									-- (Minimum distance passengers respond to.)
-																				-- (Also the minimum teleport distance.)
+		SignificantDistance		 		= 	0.15,					-- (Minimum distance passengers respond to.)
+														-- (Also the minimum teleport distance.)
 		
-		MaxBoardingDistance 		= 	30,									-- (Maximum distance before passengers give up.)
-		MaxBoardingVelocity 		= 	4,										-- (Maximum speed for the below two options.)
-		OBPMovementReq 				= 	'VelocityOnly',							-- (Requirement to move to the OBP.)
-																				-- ('VelocityOnly' = must be slower than the above.)
-																				-- ('CompleteStop' = doors must also be open.)
-		IBPMovementReq 				= 	'CompleteStop',							-- (Above for the IBP.)
-		WaitForAlighters 			= 	true,									-- (Wait for alighting passengers before boarding.)
+		MaxBoardingDistance 				= 	30,					-- (Maximum distance before passengers give up.)
+		MaxBoardingVelocity 				= 	4,					-- (Maximum speed for the below two options.)
+		OBPMovementReq 					= 	'VelocityOnly',				-- (Requirement to move to the OBP.)
+														-- ('VelocityOnly' = must be slower than the above.)
+														-- ('CompleteStop' = doors must also be open.)
+		IBPMovementReq 					= 	'CompleteStop',				-- (Above for the IBP.)
+		WaitForAlighters 				= 	true,					-- (Wait for alighting passengers before boarding.)
 		
 		AlightingInterval = function()
-			return 						math.random(0.4, 1.5)					-- (Get a time between two passengers alighting.)
+			return 						math.random(0.4, 1.5)			-- (Get a time between two passengers alighting.)
 		end,
 		
-		BellRingDistance 			= 	40,									-- (Passengers ring the bell when their stop is:)
-																				-- (below this distance away and,)
-																				-- (the closest stop on their bus' route.)
+		BellRingDistance 				= 	40,					-- (Passengers ring the bell when their stop is:)
+														-- (below this distance away and,)
+														-- (the closest stop on their bus' route.)
 		
-		MaxSeatChecks 				= 	47,										-- (After this many randomly chosen seats are taken,)
-																				-- (stand, as passengers don't use all seats.)
-		UseSeatCheckLimit 			= 	false,									-- (False if you want them to check all seats.)
-		CheckAllSeatsIfFull 		= 	true,									-- (If standing spaces are full too, check again?)
+		MaxSeatChecks 					= 	47,					-- (After this many randomly chosen seats are taken,)
+														-- (stand, as passengers don't use all seats.)
+		UseSeatCheckLimit 				= 	false,					-- (False if you want them to check all seats.)
+		CheckAllSeatsIfFull 				= 	true,					-- (If standing spaces are full too, check again?)
 		
-		PassengerCollisionGroupId 	= 	1,										-- Collision group ID for passengers.
-																				-- Must have ALL COLLISIONS OFF!
+		PassengerCollisionGroupId 			= 	1,					-- Collision group ID for passengers.
+														-- Must have ALL COLLISIONS OFF!
 
-		Speed 						= 	6,										-- (In studs / sec)
+		Speed 						= 	6,					-- (In studs / sec)
 		
-		CanMoveToTimeout 			= 	300
+		CanMoveToTimeout 				= 	300
 	},
 	
 	
 	Ticketing = {
-		PurchaseChance				=	0,									-- (Likelihood of buying instead of showing.)
+		PurchaseChance					=	0,					-- (Likelihood of buying instead of showing.)
 		
 		Pricing = {
-			PricePerStop				=	0.45,								-- (Fare stage prices are for the first stop.)	
-			ReturnMultiplier			=	1.5,								-- (Increased price from a single.)
-			PriceRounding				=	0.05,								-- (What to round fares to.)
+			PricePerStop				=	0.45,					-- (Fare stage prices are for the first stop.)	
+			ReturnMultiplier			=	1.5,					-- (Increased price from a single.)
+			PriceRounding				=	0.05,					-- (What to round fares to.)
 		},
 		
 		Greetings = {
-			Probability				=	0.7,									-- (The chance (0-1) of passengers greeting the driver)
-																				-- (Note this is non-purchasing passengers only)
+			Probability				=	0.7,					-- (The chance (0-1) of passengers greeting the driver)
+														-- (Note this is non-purchasing passengers only)
 			
-			Texts 					= 	{										-- (What the passengers might say.)
+			Texts 					= 	{					-- (What the passengers might say.)
 				'Hello!',
 				'G\'day!',
 				'Hi there!',
@@ -230,38 +233,38 @@ local Config = {
 		
 		InvalidTickets = {
 			Probabilities = {
-				Expired				=	0,									-- (Using an expired ticket.)
-				FalseChild			=	0,									-- (An adult using a child ticket.)
-				FalseAdult			=	0,									-- (A child using an adult ticket.)
-				InvalidReturn		=	0,									-- (Returning from the wrong location.)
-				Forged				=	0,									-- (Invalid field data.)
-				ForgedPerField		=	0									-- (Chance of a forgery manifesting in a field.)
+				Expired				=	0.002,					-- (Using an expired ticket.)
+				FalseChild			=	0.005,					-- (An adult using a child ticket.)
+				FalseAdult			=	0.001,					-- (A child using an adult ticket.)
+				InvalidReturn			=	0.007,					-- (Returning from the wrong location.)
+				Forged				=	0.0002,					-- (Invalid field data.)
+				ForgedPerField			=	30					-- (Chance of a forgery manifesting in a field.)
 			},
 			
-			ExpiryDateChance		=	0										-- (When finding a date for an expired ticket,)
-		},																		-- (the chance of each day back being picked.)
-																				-- (Higher = expired tickets are more recent.)
+			ExpiryDateChance			=	50					-- (When finding a date for an expired ticket,)
+		},												-- (the chance of each day back being picked.)
+														-- (Higher = expired tickets are more recent.)
 		
 		Machine = {
-			ClickDebounce			=	0.1										-- (Prevent going through multiple menus at once.)
+			ClickDebounce				=	0.1					-- (Prevent going through multiple menus at once.)
 		},
 		
 		GetCurrentTime = function()
-			return DateTime.now():ToUniversalTime()								-- How to get the current DateTime.
+			return DateTime.now():ToUniversalTime()							-- How to get the current DateTime.
 		end
 	},
 	
 	
 	-- These values can be changed from the server: 
-	-- Player.AIBusPassengers.[Enabled/RenderCycleLength/MinRenderDistance/MaxRenderDistance/MaxRenderCycles]
+	-- Player.AIBusPassengers.[Enabled/RenderCycleLength/MinRenderDistance/MaxRenderDistance/MaxRenderCycles].Value
 	Rendering = {
-		EnabledByDefault			=	true,									-- (Whether to enable the passengers on the client.)
-		CycleLength 				= 	1,										-- (Length of one render cycle.)
-		LoadIn 						= 	1000,									-- (Passengers within this radius are loaded in.)
-		LoadOut 					= 	1500,									-- (Passengers outside this radius are loaded out.)
-		MaxOpsPerCycle 				= 	250,									-- (Max queues/loads per render cycle.)
-		StatsBox					=	false									-- (Display a debug box in the bottom left.)
-																				-- (Breaks in some games.)
+		EnabledByDefault				=	true,					-- (Whether to enable the passengers on the client.)
+		CycleLength 					= 	1,					-- (Length of one render cycle.)
+		LoadIn 						= 	1000,					-- (Passengers within this radius are loaded in.)
+		LoadOut 					= 	1500,					-- (Passengers outside this radius are loaded out.)
+		MaxOpsPerCycle 					= 	250,					-- (Max queues/loads per render cycle.)
+		StatsBox					=	false					-- (Display a debug box in the bottom left.)
+														-- (Breaks in some games.)
 	},
 	
 	
@@ -272,19 +275,19 @@ local Config = {
 	
 	
 	Misc = {
-		KeypressEvent				=	game.ReplicatedStorage.Keypress,		-- An event that fires on every keypress.
-																				-- With one parameter (Enum.KeyCode.whatever)
-		SetupDelay					=	2,										-- (How long to wait before setting a bus up.)
-		FrequenciesInSeconds 		= 	false,									-- (If you would prefer to use seconds to configure.)
-		MultipliersInDecimal 		= 	false,									-- (As above.)
-		CheckCompatibility			=	false,									-- (Check bus compatibility.)
-		PassengerSpawningInterval 	= 	10,										-- (Lower = more accurate spawning time, laggier.)
-		GlobalModifier 				= 	100										-- (Modifies all spawn amounts.)
+		KeypressEvent					=	game.ReplicatedStorage.Keypress,	-- An event that fires on every keypress.
+														-- With one parameter (Enum.KeyCode.whatever)
+		SetupDelay					=	2,					-- (How long to wait before setting a bus up.)
+		FrequenciesInSeconds 				= 	false,					-- (If you would prefer to use seconds to configure.)
+		MultipliersInDecimal 				= 	false,					-- (As above.)
+		CheckCompatibility				=	false,					-- (Check bus compatibility.)
+		PassengerSpawningInterval 			= 	10,					-- (Lower = more accurate spawning time, laggier.)
+		GlobalModifier 					= 	100					-- (Modifies all spawn amounts.)
 	},
 
 
 	Sounds = {
-		Bell 						= 	'rbxassetid://6044527717'				-- Sound ID for the bell.
+		Bell 						= 	'rbxassetid://6044527717'		-- Sound ID for the bell.
 	},
 	
 	
@@ -298,9 +301,9 @@ local Config = {
 	
 	
 	Peaking = {
-		MorningStart 				= 	7,										-- (Period start/end times.)
-		MorningEnd 					= 	10,
-		EveningStart 				= 	16,
+		MorningStart 					= 	7,					-- (Period start/end times.)
+		MorningEnd 					= 	10,					-- (As hours on the 24 hour clock)
+		EveningStart 					= 	16,
 		EveningEnd 					= 	19,
 		NightStart 					= 	21,
 		NightEnd 					= 	6,
@@ -351,8 +354,8 @@ local Config = {
 		Presets = {
 			CityCentreOut 			= {	070,	130,	025,	075,	050,			100,	100,	110,	120,	120	},
 			CityCentreIn 			= {	130,	070,	035,	105,	075,			100,	100,	100,	100,	100	},
-			SuburbsOut			 	= {	110,	095,	010,	140,	110,			100,	100,	125,	110,	110	},
-			SuburbsIn 				= {	130,	090,	015,	110,	080,			100,	100,	105,	115,	115	}
+			SuburbsOut			= {	110,	095,	010,	140,	110,			100,	100,	125,	110,	110	},
+			SuburbsIn 			= {	130,	090,	015,	110,	080,			100,	100,	105,	115,	115	}
 		}
 	},
 	
