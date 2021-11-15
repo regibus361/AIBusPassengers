@@ -1,6 +1,6 @@
 --[[
 
-Script version:		1.0.11 (11th Nov 2021)
+Script version:		1.0.11 (15th Nov 2021)
 
 This module creates and manages AI passengers that can ride buses. It could also easily be adapted for other vehicles.
 This is the short documentation that only goes through how to use this module, not how it works.
@@ -122,11 +122,12 @@ local Config = {
 			FinalBoarding 				= 	Bus.Main.three,				-- Passengers walk here from the IBP.
 														-- From here, the passengers teleport to their seats.
 			
-			OutsideAlighting			=	Bus.Main.three,				-- Reverse points for the above.
+			OutsideAlighting			=	Bus.Main.one,				-- Reverse points for the above.
 														-- For single door buses, use the same parts.
+														-- Slightly confusing - you START from Final alighting
 			InsideAlighting				=	Bus.Main.two,
 			
-			FinalAlighting				=	Bus.Main.one,			
+			FinalAlighting				=	Bus.Main.three,			
 			
 			Trigger 				= 	Bus.Main.maintrig,			-- The trigger part at the front of the bus.
 			
