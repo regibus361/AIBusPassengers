@@ -5,7 +5,7 @@ local Enabled = true -- Quickly turn all AI passengers off.
 
 
 
-Script version:		1.0.11 (10th Nov 2021)
+Script version:		1.0.11 (15th Nov 2021)
 
 --Changelog
 -------------------------
