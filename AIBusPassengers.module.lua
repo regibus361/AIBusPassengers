@@ -5,20 +5,11 @@ local Enabled = true -- Quickly turn all AI passengers off.
 
 
 
-Script version:		1.0.11 (15th Nov 2021)
-
---Changelog
--------------------------
-Fixed bugs / badly documented things. Please report any issues to me!
-
-Added ticketing. I still need to do passengers putting coins on the table, fines and unpaid fare reports,
-plus their associated behaviours.
-
-
+Script version:		1.0.12 (19th Dec 2021)
 
 This module creates and manages AI passengers that can ride buses. It could also easily be adapted for other vehicles.
 This is the additional documentation that describes every function in detail such that people can contribute to improving the code.
-If you're just using this module, you only need to read the shorter documentation in the Config script parented to this script.
+If you're just using this module, you only need to read the shorter documentation in the Config script parented to this Config.Folders.Assets.
 If you are adding to the code, read that as well, as it has information on bus and stop layout, etc.
 This documentation isn't very formal, like Roblox's documentation. Maybe that's worse? Who knows...
 
@@ -152,9 +143,8 @@ The SetupBus function sets up a bus with its BusData for use by passengers.
 It also manages GUI changes and events.
 It's not very well optimised and uses a coroutine-embedded-while loop. Events were worse.
 
-Finally, the Passengers.Start function is the module's only global (public) function.
-It takes a Config table as a parameter and does an assortment of things.
-Most of it is 'for every x, do this' stuff. It also handles passenger spawning
+Finally, the returned function takes a Config table as a parameter and does an assortment of things.
+Most of it is 'for every x, do this' stuff. It also handles passenger spawning.
 
 
 
@@ -166,8 +156,9 @@ local Passengers = {}
 
 
 
---You can alternatively install this manually by going to https://roblox.com/library/6113306211
+--You can alternatively install these manually by going to https://roblox.com/library/{thenumber}
 local regiLibrary = require(6113306211)
+local FastSignal = require(8289238204)
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -183,6 +174,7 @@ local BoardingQueues = {}
 local AlightingQueues = {}
 local BusMovementTweenInfos = {}
 local PassengerATracks = {}
+local PassengerMovementTweens = {}
 local CurrentGuis = {}
 
 
@@ -234,9 +226,9 @@ local function RandomStopSpawn(Stop)
 	local PositionPart = Config.GetStopLocation(Stop, 'WaitingArea')
 	local SpawnPosition = regiLibrary.vect_randomCoordInPart(PositionPart, 'randomFloat')
 	local SpawnOrientation = regiLibrary.vect_randomOrientation('randomFloat')
-	
+
 	-- Don't randomise Y position, X/Z orientation
-	local PositionCFrame = CFrame.new(Vector3.new(SpawnPosition.X, PositionPart.Position.Y, SpawnPosition.Z))
+	local PositionCFrame = CFrame.new(Vector3.new(SpawnPosition.X, PositionPart.Position.Y + Config.Movement.Height, SpawnPosition.Z))
 	local AngleCFrame = CFrame.Angles(PositionPart.Orientation.X, SpawnOrientation.Y, PositionPart.Orientation.Z)
 	return PositionCFrame * AngleCFrame	
 end
@@ -448,7 +440,7 @@ local function BoardBus(Passenger, Bus, Stop)
 	-- Lay out the GUI
 	local StuffToDestroy = {}
 	local StuffToDisconnect = {}
-	local Ticketing = script.Ticketing:Clone()
+	local Ticketing = Config.Folders.Assets.Ticketing:Clone()
 	table.insert(StuffToDestroy, Ticketing)
 
 	-- Allow the driver to accept or reject
@@ -595,7 +587,7 @@ local function BoardBus(Passenger, Bus, Stop)
 					end
 
 					SkipDebounce() -- As we just debounced (7 lines up)
-					OfferChildren(script.Tickets)
+					OfferChildren(Config.Folders.Assets.Tickets)
 				end
 
 				-- The passenger should walk off happily
@@ -672,7 +664,7 @@ local function BoardBus(Passenger, Bus, Stop)
 		end
 	end
 
-	OfferChildren(script.Tickets)
+	OfferChildren(Config.Folders.Assets.Tickets)
 
 	-- Decide whether to give a ticket, or buy one
 	if Rnd:NextNumber() > Config.Ticketing.PurchaseChance then
@@ -703,7 +695,7 @@ local function BoardBus(Passenger, Bus, Stop)
 
 		-- Get a random ticket
 		local Tickets = {}
-		for _, d in ipairs(script.Tickets:GetDescendants()) do
+		for _, d in ipairs(Config.Folders.Assets.Tickets:GetDescendants()) do
 			if d:IsA('Frame') then
 				table.insert(Tickets, d)
 			end
@@ -967,7 +959,7 @@ local function BoardBus(Passenger, Bus, Stop)
 		-- But first, decide what we want
 		local Tickets = {}
 
-		for _, c0 in ipairs(script.Tickets:GetChildren()) do
+		for _, c0 in ipairs(Config.Folders.Assets.Tickets:GetChildren()) do
 			for _, c1 in ipairs(c0:GetChildren()) do
 				table.insert(Tickets, c1)
 			end
@@ -1070,7 +1062,7 @@ end
 
 
 --check if we can move to either OBP or IBP
-local function CanMoveTo(Bus, BP, WaitIfFalse, Timeout)
+local function CanMoveTo(Bus, BP, IsAlighting, WaitIfFalse, Timeout)
 	if BP == 'OBP' then
 		BP = Config.Movement.OBPMovementReq --convenience
 	elseif BP == 'IBP' then
@@ -1078,7 +1070,13 @@ local function CanMoveTo(Bus, BP, WaitIfFalse, Timeout)
 	end --otherwise, a raw value e.g. 'CompleteStop' can be passed
 
 	local DSeat = Config.GetBusLocation(Bus, 'DrivingSeat')
-	local DoorsOpen = Config.GetBusLocation(Bus, 'FrontDoorsOpen')
+	local DoorsOpen
+	
+	if IsAlighting == true then
+		DoorsOpen = Config.GetBusLocation(Bus, 'RearDoorsOpen')
+	else
+		DoorsOpen = Config.GetBusLocation(Bus, 'FrontDoorsOpen')
+	end
 
 	if BP == 'CompleteStop' and DoorsOpen.Value == false then --no point repeatedly running a while true do unless needed
 		if WaitIfFalse == false then
@@ -1090,9 +1088,9 @@ local function CanMoveTo(Bus, BP, WaitIfFalse, Timeout)
 
 	local function CheckForStop() --effectively a wrapper for waiting
 		if BP == 'CompleteStop' then
-			return DSeat.Velocity.Magnitude < Config.Movement.MaxBoardingVelocity and DoorsOpen.Value == true
+			return DSeat.Velocity.Magnitude < Config.Movement.MaxBusVelocity and DoorsOpen.Value == true
 		elseif BP == 'VelocityOnly' then
-			return DSeat.Velocity.Magnitude < Config.Movement.MaxBoardingVelocity --only bother checking velocity
+			return DSeat.Velocity.Magnitude < Config.Movement.MaxBusVelocity --only bother checking velocity
 		else
 			return true
 		end
@@ -1160,8 +1158,10 @@ local function SetDriverGUI(Bus, Name, hide)
 			CurrentGuis[Driver.Name] = Gui
 		end
 	else --passing Name as 'all' hides all Guis
-		for _, Gui in ipairs(Driver.PlayerGui.AIBusPassengers:GetChildren()) do
-			Gui.Visible = false
+		for _, Gui in ipairs(Driver.PlayerGui.AIBusPassengers:GetDescendants()) do
+			if Gui:IsA('GuiObject') then
+				Gui.Visible = false
+			end
 		end
 
 		CurrentGuis[Driver.Name] = nil
@@ -1243,7 +1243,7 @@ local function Unseat(Passenger)
 	if Passenger.Humanoid.Sit == false then
 		return --they're already sat down
 	end
-
+	
 	Passenger.Humanoid.Sit = false
 
 	local Seat = Passenger.Humanoid.SeatPart
@@ -1256,10 +1256,7 @@ local function Unseat(Passenger)
 	end
 
 	-- Anchor us again
-	if Passenger.PrimaryPart.Anchored == false then
-		AnchorPassenger(Passenger, true)
-	end
-
+	AnchorPassenger(Passenger, true)
 	Passenger.Humanoid.Sit = false
 	Passenger.Humanoid:ChangeState(Enum.HumanoidStateType.Running)
 	AnimatePassenger(Passenger, Passenger.Animate.sit.SitAnim, false)
@@ -1271,12 +1268,11 @@ end
 local function Seat(Passenger, SeatPart, Animate)
 	if Animate == nil then Animate = true end
 
-	Passenger.PrimaryPart.Anchored = false -- So we can move
-
 	if Animate == true then
 		AnimatePassenger(Passenger, Passenger.Animate.sit.SitAnim, true) -- A function to play anims
 	end
-
+	
+	AnchorPassenger(Passenger, false)
 	SeatPart:Sit(Passenger.Humanoid)
 	Passenger.Humanoid:ChangeState(Enum.HumanoidStateType.Seated)
 end
@@ -1301,9 +1297,9 @@ end
 
 
 -- Have a passenger walk somewhere
-local function MoveTo(Passenger, Position, IncreaseYCoord)
+local function MoveTo(Passenger, Position, WaitForCompletion, IncreaseYCoord)
 	if Passenger.PrimaryPart == nil then
-		return
+		return nil
 	end
 
 	-- Move the passengers up a bit
@@ -1319,17 +1315,11 @@ local function MoveTo(Passenger, Position, IncreaseYCoord)
 
 	local Distance = math.abs((TargetNoY - CurrentNoY).Magnitude)
 	if Distance < Config.Movement.SignificantDistance then
-		return
+		return nil
 	end
 
 	-- Make sure they're stood up
 	Unseat(Passenger)
-
-	-- Animate the walking
-	local WalkAnimation = Passenger.Animate.walk.WalkAnim
-	local Animator = Passenger:FindFirstChildOfClass('Humanoid').Animator
-	local LoadedAnimation = Animator:LoadAnimation(WalkAnimation)
-	LoadedAnimation:Play()
 
 	-- Set their orientation to face towards the destination
 	-- I can't think of an easy way to tween this without problems, as CFrame and Position are linked-ish
@@ -1347,11 +1337,41 @@ local function MoveTo(Passenger, Position, IncreaseYCoord)
 	local Properties = { ['Position'] = Position }
 
 	local Tween = TweenService:Create(Passenger.PrimaryPart, Info, Properties)
+	
+	-- Replace any existing tween
+	local LoadedAnimation
+	
+	if PassengerMovementTweens[Passenger] ~= nil then
+		local CurrentPosition = Passenger.PrimaryPart.Position
+		PassengerMovementTweens[Passenger][1]:Destroy()
+		LoadedAnimation = PassengerMovementTweens[Passenger][2]
+		TeleportToPosition(Passenger, CurrentPosition)
+	else
+		-- Animate the walking (it won't be animated already)
+		local WalkAnimation = Passenger.Animate.walk.WalkAnim
+		local Animator = Passenger:FindFirstChildOfClass('Humanoid').Animator
+		LoadedAnimation = Animator:LoadAnimation(WalkAnimation)
+		LoadedAnimation:Play()
+	end
+	
+	PassengerMovementTweens[Passenger] = { Tween, LoadedAnimation }
 	Tween:Play()
 
-	-- Stop animating when it finishes
-	Tween.Completed:Wait()
-	LoadedAnimation:Stop()
+	-- Stop animating and remove the reference when it finishes
+	Tween.Completed:Connect(function()
+		LoadedAnimation:Stop()
+		PassengerMovementTweens[Passenger] = nil
+	end)
+	
+	if WaitForCompletion == true then
+		-- Repeatedly check if the tween has either completed or been replaced
+		local Exit = FastSignal.new()
+		Tween.Completed:Connect(function() Exit:Fire() end)
+		Tween.Destroying:Connect(function() Exit:Fire() end)
+		Exit:Wait()
+	end
+	
+	return Tween
 end
 
 
@@ -1377,6 +1397,14 @@ local function RingBell(Bus)
 				BellSound:Destroy()
 				Connection:Disconnect()
 			end)
+			
+			-- Unring the bell when the doors open
+			local Connection2
+			Connection2 = DoorsOpen.Changed:Connect(function(v)
+				if v == true then
+					BellRung.Value = false
+				end
+			end)
 		end
 	end
 end
@@ -1391,7 +1419,6 @@ local function Alight(Passenger)
 	local BVal = regiLibrary.Instantiate(nil, 'BoolValue', Bus.BusData.PassengersAlighting)
 
 	local BellRung = Bus.BusData.BellRung
-	BellRung.Value = false --doors must be open, so disable the bell
 
 	local FinalAP = Config.GetBusLocation(Bus, 'FinalAlighting')
 	local InsideAP = Config.GetBusLocation(Bus, 'InsideAlighting')
@@ -1415,20 +1442,19 @@ local function Alight(Passenger)
 		table.remove(Queue, 3)
 		Queue[2]:Fire()
 	end)()
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim,true)
-	MoveTo(Passenger, InsideAP.Position)
-	MoveTo(Passenger, OutsideAP.Position)
+	MoveTo(Passenger, InsideAP.Position, true)
+	MoveTo(Passenger, OutsideAP.Position, true)
 
 	--we're off, so the bus can leave (and is also no longer full)
 	BVal:Destroy()
 
 	local Stop = CurrentStop(Bus)
 	if Stop ~= nil then --as the function can return nil
-		MoveTo(Passenger, RandomStopSpawn(Stop).p, false) --.p as RandomStopSpawn returns a CFrame
+		--.p as RandomStopSpawn returns a CFrame
+		MoveTo(Passenger, RandomStopSpawn(Stop).p, true)
 	end
-
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, false)
-	Passenger:Destroy() --we're done!
+	
+	Passenger:Destroy()
 end
 
 
@@ -1496,21 +1522,9 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 
 	--and the seat
 	PassengerSeat[1].Taken.Value = Passenger
-
-	--and move to the OBP
-	local function MoveToOBP()
-		AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, true)
-		MoveTo(Passenger, OutsideBoardingPoint.Position)
-		AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, false)
-	end
-
+	
 	--if we're sat down, get up
 	Unseat(Passenger)
-
-	--and make sure we don't sit back down again (silly passengers)
-	local SeatDetection = Humanoid.Seated:Connect(function()
-		Unseat(Passenger)
-	end)
 
 	--wait for the bus to stop, potentially timing out or giving up, and make sure it's still the correct route
 	local WStart = tick()
@@ -1518,13 +1532,16 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 	while task.wait(0.1) do
 		local QueuePos = table.find(BoardingQueue, Passenger)
 		local Distance = math.abs((OutsideBoardingPoint.Position - Passenger.HumanoidRootPart.Position).Magnitude)
-
-		if CanMoveTo(Bus, 'IBP', false) == true and CanBoard(Passenger, Route.Value) == true and QueuePos == 3 and 
-			(Config.Movement.WaitForAlighters == false or 
+		local CanBoardRoute = CanBoard(Passenger, Route.Value)
+		local CanMoveToOBP = CanMoveTo(Bus, 'OBP', false, false)
+		local CanMoveToIBP = CanMoveTo(Bus, 'IBP', false, false)
+		
+		if CanMoveToIBP == true and CanBoardRoute == true and QueuePos == 3 and
+			(Config.Movement.WaitForAlighters == false or
 				(#Bus.BusData.PassengersAlighting:GetChildren() == 0 and Bus.BusData.BellRung.Value == false)) then
 			break --so we can continue
 		else
-			if (Distance > Config.Movement.MaxBoardingDistance) or ((tick() - WStart) > Config.Movement.CanMoveToTimeout) then
+			if Distance > Config.Movement.MaxDistance or CanBoardRoute == false then
 				--give up
 				MoveTo(Passenger, WaitingPoint, false)
 				BVal:Destroy()
@@ -1542,30 +1559,30 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 				return false	
 			end
 
-			if Distance > Config.Movement.SignificantDistance and CanMoveTo(Bus, 'OBP', false) == true then
-				MoveToOBP()
-			end
-
-			if QueuePos == nil then
-				--we need to join the queue
-				table.insert(BoardingQueue, Passenger)
+			if CanMoveToOBP == true then
+				-- In a coroutine so passengers can change direction (reloop)
+				coroutine.wrap(function()
+					MoveTo(Passenger, OutsideBoardingPoint.Position, true)
+					
+					-- Check QueuePos again in case it's changed
+					if table.find(BoardingQueue, Passenger) == nil then
+						-- We need to join the queue
+						table.insert(BoardingQueue, Passenger)
+					end	
+				end)()
 			end
 		end
 	end
 
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, true)
-	MoveTo(Passenger, InsideBoardingPoint.Position)
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, false)
+	MoveTo(Passenger, InsideBoardingPoint.Position, true)
 
 	local success = BoardBus(Passenger, Bus, Stop) --this yields, allowing ticket selling etc in a modular fashion
 	table.remove(BoardingQueue, 3) --leave the queue
 	BoardingQueue[2]:Fire() --fire the event so the next passenger moves forward
 
 	if success == false then --if BoardBus returned false for whatever reason
-		AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, true)
-		MoveTo(Passenger, OutsideBoardingPoint.Position)
-		MoveTo(Passenger, WaitingPoint, false) 
-		AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim, false)
+		MoveTo(Passenger, OutsideBoardingPoint.Position, true)
+		MoveTo(Passenger, WaitingPoint, false)
 
 		PassengerData.WaitingStop.Value = Stop
 		PassengerData.CurrentBus.Value = nil
@@ -1578,13 +1595,9 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 	--if we didn't return, set the CurrentBus value & leave the queue and PassengersBoarding list
 	BVal:Destroy()
 
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim,true)
-	MoveTo(Passenger, FinalBoardingPoint.Position)
-	AnimatePassenger(Passenger, Passenger.Animate.walk.WalkAnim,false)
+	MoveTo(Passenger, FinalBoardingPoint.Position, true)
 
 	--and sit down
-	SeatDetection:Disconnect()
-
 	if PassengerSeat[2] == false then
 		Seat(Passenger, PassengerSeat[1], true)
 	else
@@ -1628,7 +1641,7 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 				--and when the bus stops, alight
 				--NOTE: this does not check whether the doors have opened at the stop, as opposed to somewhere else.
 				--I thought of a good reason for this, but now I've forgotten it.
-				CanMoveTo(Bus, 'IBP', true, math.huge)
+				CanMoveTo(Bus, 'IBP', true, true, math.huge) -- wait until alighting is possible
 				Alight(Passenger)
 
 				--and return (as we're now done)
@@ -1836,20 +1849,13 @@ local function SpawnPassenger(Stop, Route)
 
 		if otherPart.Name == Config.TriggerName then
 			Bus = Config.GetBusLocation(otherPart, 'FromTrigger')
-			if table.find(RegisteredBuses, Bus) ~= nil then
-				return --we already know about this bus
-			else
-				table.insert(RegisteredBuses, Bus)
-
-				--set up some events
-				Config.GetBusLocation(Bus, 'RouteCode').Changed:Connect(CallBusArrived)
-				Bus.BusData.PassengersAlighting.ChildRemoved:Connect(CallBusArrived) --if someone's done getting off, a space might have cleared
+			if table.find(RegisteredBuses, Bus) == nil then
+				table.insert(RegisteredBuses, Bus)		
+				CallBusArrived()
 			end
-		else
-			return --not a bus
 		end
 
-		CallBusArrived()
+		
 	end
 
 	Connection = Detector.Touched:Connect(DetectorTouched)
@@ -1924,7 +1930,7 @@ local function SetupBus(Bus)
 	local DoorsOpen = Config.GetBusLocation(Bus, 'FrontDoorsOpen')
 
 	--give the bus its GUI
-	local InfoGui = script.InfoGui:Clone()
+	local InfoGui = Config.Folders.Assets.InfoGui:Clone()
 	InfoGui.Name = 'AIBusPassengers'
 	InfoGui.Parent = BusData
 
@@ -1960,11 +1966,11 @@ local function SetupBus(Bus)
 		end)
 
 		--main loop
-		while false do -- !!! was task.wait(0.1), but this is disabled rn until core rewrite
+		while task.wait(0.1) do
 			--before doing anything, make sure AI is actually enabled
-			if DSeat.Occupant then
+			if Enabled == true and DSeat.Occupant ~= nil then
 				local p = Players:GetPlayerFromCharacter(DSeat.Occupant.Parent)
-				if p and p.AIBusPassengers.Enabled.Value == true then
+				if p ~= nil and p.AIBusPassengers.Enabled.Value == true then
 					--see if we're at a stop
 					CheckAtStop()
 
@@ -2034,7 +2040,7 @@ end
 
 
 --starts the system up - call this from ServerScriptService ASAP when running
-function Passengers.Start(config)
+return function(config)
 	if Enabled == false then return end
 
 	Config = config --apply
@@ -2125,7 +2131,7 @@ function Passengers.Start(config)
 			end
 		end
 	end
-	
+
 	if Config.Misc.MultipliersInDecimal == false then
 		Config.Misc.GlobalModifier *= 0.01
 	end
@@ -2273,7 +2279,3 @@ function Passengers.Start(config)
 		end
 	end
 end
-
-
-
-return Passengers
