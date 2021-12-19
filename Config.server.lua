@@ -1,6 +1,6 @@
 --[[
 
-Script version:		1.0.12 (19th Dec 2021)
+Script version:		1.0.13 (19th Dec 2021)
 
 This module creates and manages AI passengers that can ride buses. It could also easily be adapted for other vehicles.
 This is the short documentation that only goes through how to use this module, not how it works.
@@ -65,15 +65,13 @@ local s = game.Workspace.BusStops		-- The folder you keep all your bus stops in.
 
 local Config = {
 	Folders = {
-		Assets						=	script.Parent.Assets,					-- Folder containing ticket images etc.
+		Assets						=	game.ServerStorage.Assets,				-- Folder containing ticket images etc.
 		
-		Stops						=	s,										-- Folder in Workspace containing all bus stops.
-		-- This doesn't actually need to include the stops,
-		-- it just needs the two parts described above.
+		Stops						=	s,										-- (Ignore this line!)
 
 		Avatars 					= 	game.ServerStorage.AIPassengerAvatars,	-- A folder in ServerStorage containing avatars.
 		-- I recommend using R6 for optimisation.
-		-- However, the module is fine with all types.
+		-- However, the module should be fine with all types.
 
 		Buses 						= 	game.Workspace.Buses,					-- Where your buses are in the workspace.
 		IsBus						=	function(_)								-- If there are other objects in the above location,
@@ -162,7 +160,7 @@ local Config = {
 		SignificantDistance		 	= 	0.15,									-- (Minimum distance passengers respond to.)
 		-- (Also the minimum teleport distance.)
 
-		MaxDistance 				= 	100,									-- (Maximum distance before passengers give up.)
+		MaxDistance 				= 	250,									-- (Maximum distance before passengers give up.)
 		
 		MaxBusVelocity		 		= 	5,										-- (Maximum speed of buses to walk inside.)
 		-- (If this is exceeded, the passenger will teleport instead)
@@ -173,7 +171,7 @@ local Config = {
 		WaitForAlighters 			= 	false,									-- (Wait for alighting passengers before boarding.)
 
 		AlightingInterval = function()
-			return 						Rnd:NextNumber(1, 2.5)				-- (Get a time between two passengers alighting.)
+			return 						Rnd:NextNumber(1, 3)					-- (Get a time between two passengers alighting.)
 		end,
 
 		BellRingDistance 			= 	2000,									-- (Passengers ring the bell when their stop is:)
@@ -188,10 +186,14 @@ local Config = {
 		UseSeatCheckLimit 			= 	true,									-- (False if you want them to check all seats.)
 		
 		CheckAllSeatsIfFull 		= 	true,									-- (If standing spaces are full too, check again?)
+		
+		MaxStopCountMultiplier		=	1.15,									-- (Passengers will tolerate this many more stops)
+		-- (on a route than the route they were planning to get.)
+		-- (Prevents passengers getting on really slow routes)
 
 		PassengerCollisionGroupId 	= 	3,										-- Collision group ID for passengers.
 		-- Must have ALL COLLISIONS OFF!
-
+		
 		Speed 						= 	4,										-- (In studs / sec)
 		Height						=	2.5										-- How many studs up the root part is.
 	},
@@ -200,11 +202,11 @@ local Config = {
 	Ticketing = {
 		Enabled						=	true,									-- (Whether to use ticketing at all.)
 		
-		PurchaseChance				=	0.6,									-- (Likelihood of buying instead of showing.)
+		PurchaseChance				=	0.5,									-- (Likelihood of buying instead of showing.)
 
 		Pricing = {
 			PricePerStop			=	0.35,									-- (Fare stage prices are for the first stop.)	
-			ReturnMultiplier		=	1.5,									-- (Increased price from a single.)
+			ReturnMultiplier		=	1.6,									-- (Multiplied price from a single.)
 			PriceRounding			=	0.05,									-- (What to round fares to.)
 		},
 
@@ -220,14 +222,20 @@ local Config = {
 				'Sup'
 			}
 		},
-
+		
+		-- (__TicketName is replaced by the name of a ticket)
 		PurchaseTexts = {
 			'I want a __TicketName!',
 			'Can I have a __TicketName please?',
 			'Wassup, gimme a __TicketName',
 			'I\'d like a __TicketName please.',
-			'__TicketName, now!' -- no comment
+			'Hey, would I be able to get a __TicketName?',
+			'__TicketName, now!', -- no comment
+			'__TicketName please.',
+			'Hi, can I have an, umm... __TicketName'
 		},
+		
+		ChanceOfSayingTicket = 0.5,												-- ('single' vs 'single ticket')
 
 		ThankTexts = {
 			'Thank you!',
@@ -235,15 +243,19 @@ local Config = {
 			'Cool, thanks',
 			'Cheers bro'
 		},
+		
+		InsufficientPayment = {
+			BaseChance 				= 	0.02,									-- (Chance a passenger tries to pay too little.)
+			ChancePerPenny			=	0.99,									-- (Repeat checks to decide HOW little.)
+		},
+		
 
 		InvalidTickets = {
 			Probabilities = {
-				Expired				=	0.05,									-- (Using an expired ticket.)
-				FalseChild			=	0.1,									-- (An adult using a child ticket.)
-				FalseAdult			=	0.1,									-- (A child using an adult ticket.)
-				InvalidReturn		=	0.1,									-- (Returning from the wrong location.)
-				Forged				=	0.01,									-- (Invalid field data.)
-				ForgedPerField		=	0.2										-- (Chance of a forgery manifesting in a field.)
+				Expired				=	0.005,									-- (Using an expired ticket.)
+				InvalidReturn		=	0.01,									-- (Returning from the wrong location.)
+				Forged				=	0.001,									-- (Invalid field data.)
+				ForgedPerField		=	0.02										-- (Chance of a forgery manifesting in a field.)
 			},
 
 			ExpiryDateChance		=	0.3										-- (When finding a date for an expired ticket,)
@@ -356,7 +368,7 @@ local Config = {
 		[s.WestHadlowE] = {'Hadlow', 'Hadlow'},
 		[s.WestHadlowW] = {'Hadlow', 'Hadlow'},
 		[s.WesternFlatsN] = {'the central flats', 'Industrial'},
-		[s.WesternFlatsN] = {'opposite the central flats', 'Industrial'}
+		[s.WesternFlatsS] = {'opposite the central flats', 'Industrial'}
 	},
 
 
@@ -497,7 +509,7 @@ local Config = {
 			{ "02401",	30	},
 			{ s.BusStation,				6,		0,			"CityCentreOut",	050	},
 			{ s.WesternFlatsN,			10,		67,			"CityCentreOut",	080	},
-			{ s.IndustrialEstateW,		22,		15,			"CityCentreOut",	100	},
+			{ s.IndustrialEstateE,		22,		15,			"CityCentreOut",	100	},
 			{ s.UpperNewDoverRdW,		2,		25,			"SuburbsOut",		120 },
 			{ s.SuperstoreTerminusE,	6,		12,			080,	150,	025,	075,	060,			115,	090,	110,	105,	105	},
 			{ s.MarbleStreetE,			12,		15,			"SuburbsOut",		075	},
