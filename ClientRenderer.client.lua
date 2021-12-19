@@ -3,7 +3,7 @@
 Parent this to StarterPlayerScripts!
 
 
-Script version:		1.0 (24th Feb 2021)
+Script version:		1.0.12 (19th Dec 2021)
 
 This script deals with streaming on the client to reduce lag.
 (It also passes keypresses to the server)
@@ -43,10 +43,10 @@ Player.CharacterAdded:Connect(function(c)
 end)
 
 --start by getting config
-local Config = game.ReplicatedStorage.AIBusPassengersConfigTransferrer:InvokeServer()
+local Config = game.ReplicatedStorage:WaitForChild('AIBusPassengersConfigTransferrer'):InvokeServer()
 
 --constants
-local PassengerFolder = game.Workspace:WaitForChild('LoadedPassengers')
+local PassengerFolder = game.Workspace:WaitForChild('LoadedPassengers', math.huge) -- silence infinite yield warnings
 local PassengerStore = game.ReplicatedStorage:WaitForChild('UnloadedPassengers')
 local MinRenderDistance = Config.Rendering.LoadIn
 local MaxRenderDistance = Config.Rendering.LoadOut
@@ -226,6 +226,7 @@ local function RenderPassengers()
 	for count = 1, MicrocycleCount do
 		if #InQueue > 0 then
 			CurrentPassenger = InQueue[1]
+			--CurrentPassenger.Parent = Config.GetBusLocation(CurrentPassenger.PassengerData.CurrentBus.Value, 'Main')
 			CurrentPassenger.Parent = PassengerFolder
 			table.remove(InQueue, 1)
 		elseif #OutQueue > 0 then
