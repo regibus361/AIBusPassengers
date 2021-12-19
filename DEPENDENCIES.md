@@ -7,4 +7,4 @@ regiLibrary by @regibus361<br>
 https://roblox.com/library/6113306211<br>
 Various miscellaneous functions etc.
 
-Both of these are open source.
+Both of these are open source, but required from the main module, so users needn't worry about them.
