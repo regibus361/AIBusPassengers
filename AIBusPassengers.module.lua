@@ -5,7 +5,7 @@ local Enabled = true -- Quickly turn all AI passengers off.
 
 
 
-Script version:		1.0.12 (19th Dec 2021)
+Script version:		1.0.13 (19th Dec 2021)
 
 This module creates and manages AI passengers that can ride buses. It could also easily be adapted for other vehicles.
 This is the additional documentation that describes every function in detail such that people can contribute to improving the code.
@@ -175,7 +175,11 @@ local AlightingQueues = {}
 local BusMovementTweenInfos = {}
 local PassengerATracks = {}
 local PassengerMovementTweens = {}
+local CanBoardCache = {}
+local ChildCache = {}
+local FareStageTables = {}
 local CurrentGuis = {}
+local LastSetDriverGUICall = {}
 
 
 
@@ -228,6 +232,7 @@ local function RandomStopSpawn(Stop)
 	local SpawnOrientation = regiLibrary.vect_randomOrientation('randomFloat')
 
 	-- Don't randomise Y position, X/Z orientation
+	-- (Also, add avatar height on)
 	local PositionCFrame = CFrame.new(Vector3.new(SpawnPosition.X, PositionPart.Position.Y + Config.Movement.Height, SpawnPosition.Z))
 	local AngleCFrame = CFrame.Angles(PositionPart.Orientation.X, SpawnOrientation.Y, PositionPart.Orientation.Z)
 	return PositionCFrame * AngleCFrame	
@@ -398,9 +403,32 @@ local function CreateSpeechBubble(Passenger, Content, Lifetime)
 
 	TextLabel.Parent = BillboardGui
 	BillboardGui.Parent = Passenger.Head
+	
+	task.delay(Lifetime, function()
+		BillboardGui:Destroy()
+	end)
+end
 
-	task.wait(Lifetime)
-	BillboardGui:Destroy()
+
+
+-- Position objects randomly on parent UI objects (the table)
+local function RandomUIObjectPosition(Child, Parent)
+	-- Find the allowed area for the child position (start)
+	local Start = Parent.Position
+	local ParentEnd = Start + Parent.Size
+	local ChildEnd = ParentEnd - Child.Size
+	
+	-- If any component is < 0, set to 0 and hope for the best...
+	ChildEnd = UDim2.new(
+		math.max(ChildEnd.X.Scale, Start.X.Scale), math.max(ChildEnd.X.Offset, Start.Y.Scale), 
+		math.max(ChildEnd.Y.Scale, Start.Y.Scale), math.max(ChildEnd.Y.Offset, Start.Y.Offset)
+	)
+	
+	-- Finally, pick a position
+	return UDim2.new(
+		Rnd:NextNumber(Start.X.Scale, ChildEnd.X.Scale), Rnd:NextNumber(Start.X.Offset, ChildEnd.X.Offset),
+		Rnd:NextNumber(Start.Y.Scale, ChildEnd.Y.Scale), Rnd:NextNumber(Start.Y.Offset, ChildEnd.Y.Offset)
+	)
 end
 
 
@@ -475,7 +503,7 @@ local function BoardBus(Passenger, Bus, Stop)
 	local function OfferChildren(Parent)
 		if CheckDebounce() == false then return end
 
-		-- Really bad code time
+		-- Really bad code:
 		-- For some odd reason, Ticketing:FindFirstChild('Machine') doesn't exist sometimes when this is called
 		-- However, those calls don't appear to be needed anyway, so I'm just scrapping them
 		if Ticketing:FindFirstChild('Machine') == nil then
@@ -509,32 +537,19 @@ local function BoardBus(Passenger, Bus, Stop)
 				-- Create some dummy instances.
 				local DummyParent = Parent:Clone() -- Don't modify the ticket UI objects
 				DummyParent:ClearAllChildren()
-
-				-- Find fare stages on the route
-				local FareStages = {}
-				local RouteTable = Config.Routes[RouteIndexOf(Bus.BusData.Route.Value)]
-				local CurrentIndex = 0
-
-				for Index, RouteStop in ipairs(RouteTable) do
-					if Index == 1 then continue end -- Route description row
-
-					-- Set CurrentIndex if this is our stop
-					if RouteStop[1] == Stop then
-						CurrentIndex = Index
-					end
-
-					-- Get its fare stage, and add it if it's not already there
-					local FareStage = Config.Stops[RouteStop[1]][2]
-					if FareStages[FareStage] == nil then
-						-- Calculate a price
-						local IndexDifference = Index - CurrentIndex
-
-						-- As PricePerStop is not in ones, multiply by 100
-						FareStages[FareStage] = IndexDifference * Config.Ticketing.Pricing.PricePerStop * 100
-					end
+				
+				local Route = Config.GetBusLocation(Bus, 'RouteCode').Value
+				
+				-- Get the current stage START
+				local StartIndex = FareStageTables[Route][Config.Stops[Stop][2]].First
+				
+				-- Calculate the price to each fare stage END
+				local FareStagePrices = {}
+				for Name, Indexes in pairs(FareStageTables[Route]) do
+					FareStagePrices[Name] = (Indexes.Last - StartIndex) * Config.Ticketing.Pricing.PricePerStop * 100
 				end
-
-				for FareStage, Price in pairs(FareStages) do
+				
+				for FareStage, Price in pairs(FareStagePrices) do
 					local Folder = Instance.new('Folder')
 					Folder.Name = FareStage
 					Folder.Parent = DummyParent
@@ -626,8 +641,13 @@ local function BoardBus(Passenger, Bus, Stop)
 		else
 			local Count = 0
 			local Buttons = {}
+			
+			local Children = Parent:GetChildren()
+			table.sort(Children, function(a, b)
+				return a.Name < b.Name
+			end)
 
-			for _, Option in ipairs(Parent:GetChildren()) do
+			for _, Option in ipairs(Children) do
 				-- Set the Count button to this
 				local Button = Ticketing.Machine:FindFirstChild(tostring(Count))
 				if Button == nil then
@@ -670,29 +690,17 @@ local function BoardBus(Passenger, Bus, Stop)
 	if Rnd:NextNumber() > Config.Ticketing.PurchaseChance then
 		-- Greet the driver
 		if Rnd:NextNumber() < Config.Ticketing.Greetings.Probability then
-			-- Decide on what text to display
-			local Texts = {
-				'Hello!',
-				'G\'day!',
-				'Hi there!',
-				'Hey.',
-				'Sup'
-			}
-
-			coroutine.wrap(function() -- As this is asynchronous
-				CreateSpeechBubble(Passenger, Texts[Rnd:NextInteger(1, #Texts)], 1)
-			end)()
+			local Texts = Config.Ticketing.Greetings.Texts
+			CreateSpeechBubble(Passenger, Texts[Rnd:NextInteger(1, #Texts)], 1)
 		end
 
 		-- Decide if this ticket is going to be invalid in any way
 		local InvalidProbs = Config.Ticketing.InvalidTickets.Probabilities
 
 		local Expired = Rnd:NextNumber() < InvalidProbs.Expired
-		local FalseChild = Rnd:NextNumber() < InvalidProbs.FalseChild and true -- (Children can't be false children)
-		local FalseAdult = Rnd:NextNumber() < InvalidProbs.FalseAdult and false
 		local InvalidReturn = Rnd:NextNumber() < InvalidProbs.InvalidReturn
 		local Forged = Rnd:NextNumber() < InvalidProbs.Forged
-
+		
 		-- Get a random ticket
 		local Tickets = {}
 		for _, d in ipairs(Config.Folders.Assets.Tickets:GetDescendants()) do
@@ -908,7 +916,7 @@ local function BoardBus(Passenger, Bus, Stop)
 					end
 
 					if ValueType == 'CurrentRoute' then
-						Value.Text = Bus.BusData.Route.Value
+						Value.Text = Config.GetBusLocation(Bus, 'RouteCode').Value
 					else
 						-- Pick a random route
 						local Route = Config.Routes[Rnd:NextInteger(1, #Config.Routes)]
@@ -951,23 +959,20 @@ local function BoardBus(Passenger, Bus, Stop)
 				end
 			end
 		end
-
+	
 		-- Place it on the table
-		Ticket.Parent = Driver.PlayerGui.AIBusPassengers
+		Ticket.Position = RandomUIObjectPosition(Ticket, Ticketing.Table)
+		Ticket.Parent = Ticketing
 	else
 		-- Ask for a ticket
 		-- But first, decide what we want
-		local Tickets = {}
-
-		for _, c0 in ipairs(Config.Folders.Assets.Tickets:GetChildren()) do
-			for _, c1 in ipairs(c0:GetChildren()) do
-				table.insert(Tickets, c1)
-			end
-		end
-
+		local Tickets = Config.Folders.Assets.Tickets:GetChildren()
 		local Ticket = Tickets[Rnd:NextInteger(1, #Tickets)]
 		local TicketText = Config.Ticketing.PurchaseTexts[Rnd:NextInteger(1, #Config.Ticketing.PurchaseTexts)]
-		local TicketName = Ticket.Name .. ' ticket'
+		local TicketName = Ticket.Name
+		if Rnd:NextNumber() < Config.Ticketing.ChanceOfSayingTicket then
+			TicketName = TicketName .. ' ticket'
+		end
 
 		-- Change requested ticket data
 		RequestedTicket.Name = Ticket.Name
@@ -977,10 +982,78 @@ local function BoardBus(Passenger, Bus, Stop)
 			TicketName = TicketName .. ' to ' .. Config.Stops[Passenger.PassengerData.EndStop.Value][1]
 			RequestedTicket.Destination = Config.Stops[Passenger.PassengerData.EndStop.Value][2] -- The fare stage name
 		end
+		
+		-- Put coins on the table
+		local Payment = Ticket.__Cost.Value
+		
+		-- If it's zero for a single ticket etc. then calculate it
+		if Payment == 0 then
+			local Route = Config.GetBusLocation(Bus, 'RouteCode').Value
+			
+			local CurrentFareStage = Config.Stops[Stop][2]
+			local DestinationFareStage = RequestedTicket.Destination
+			
+			local StartIndex = FareStageTables[Route][CurrentFareStage].First
+			local EndIndex = FareStageTables[Route][DestinationFareStage].Last
+			
+			Payment = (EndIndex - StartIndex) * Config.Ticketing.Pricing.PricePerStop * 100
 
-		coroutine.wrap(function()
-			CreateSpeechBubble(Passenger, string.gsub(TicketText, '__TicketName', TicketName), 5)
-		end)()
+			-- Multiply if it's a return
+			if string.find(Ticket.Name, 'Return') ~= nil then
+				Payment *= Config.Ticketing.Pricing.ReturnMultiplier
+			end
+			
+			-- And round the fare
+			local RoundToNearest = Config.Ticketing.Pricing.PriceRounding * 100
+
+			Payment /= RoundToNearest -- Bring it down to round to nearest 1
+			Payment = math.round(Payment)
+			Payment *= RoundToNearest
+		end
+		
+		if Rnd:NextNumber() < Config.Ticketing.InsufficientPayment.BaseChance then
+			while Rnd:NextNumber() < Config.Ticketing.InsufficientPayment.ChancePerPenny and Payment > 0 do
+				Payment -= 1
+			end
+		end
+		
+		-- Decide what to place
+		local PlacedCoinThisIteration = true
+		
+		while Payment > 0 and PlacedCoinThisIteration == true do
+			PlacedCoinThisIteration = false
+			
+			-- Find all the coins with <= Payment value
+			-- Pick one randomly but weighted by value (avoid 1p etc)
+			local CoinRandomValues = {}
+			local CurrentWeightValue = 0
+			
+			for _, Coin in ipairs(Config.Folders.Assets.Coins:GetChildren()) do
+				if Coin.__Value.Value <= Payment then -- If it's more, we can't use it without going over
+					CurrentWeightValue += Coin.__Value.Value
+					table.insert(CoinRandomValues, {
+						['Instance'] = Coin,
+						['MaxValue'] = CurrentWeightValue - 1 -- The top of this coin's range
+					})
+				end
+			end
+			
+			local RandomValue = Rnd:NextInteger(0, CurrentWeightValue - 1)
+			for _, Coin in ipairs(CoinRandomValues) do
+				if RandomValue <= Coin.MaxValue then
+					-- Place one of these coins, and change payment accordingly
+					local NewCoin = Coin.Instance:Clone()
+					NewCoin.Position = RandomUIObjectPosition(NewCoin, Ticketing.Table)
+					NewCoin.Parent = Ticketing
+					
+					PlacedCoinThisIteration = true
+					Payment -= Coin.Instance.__Value.Value
+					break
+				end
+			end
+		end
+
+		CreateSpeechBubble(Passenger, string.gsub(TicketText, '__TicketName', TicketName), 5)
 	end
 
 	-- Place it into PlayerGui
@@ -1030,7 +1103,14 @@ end
 
 
 --if a bus goes where a passenger is going
-local function CanBoard(Passenger, Route)	
+local function CanBoard(Passenger, Route)
+	local CacheString = 
+		Passenger.PassengerData.StartStop.Value.Name .. '___' ..
+		Passenger.PassengerData.EndStop.Value.Name .. '___' .. Route
+	if CanBoardCache[CacheString] ~= nil then
+		return CanBoardCache[CacheString] -- Save on some processing
+	end
+	
 	local Stops = Config.Routes[RouteIndexOf(Route)] 
 	local startIndices = {}
 	local endIndices = {}
@@ -1050,12 +1130,16 @@ local function CanBoard(Passenger, Route)
 	if #startIndices ~= 0 and #endIndices ~= 0 then
 		--AND if the last end is after the first start
 		--(in case a stop is served multiple times)
-		if endIndices[#endIndices] > startIndices[1] then
+		-- AND the distance is within tolerance
+		local StopsToTravel = endIndices[#endIndices] - startIndices[1]
+		if StopsToTravel > 0 and StopsToTravel <= Passenger.PassengerData.MaxStopCount.Value then
+			CanBoardCache[CacheString] = true
 			return true
 		end
 	end
-
-	--if we didn't return true...
+	
+	-- If we didn't return true
+	CanBoardCache[CacheString] = false
 	return false
 end
 
@@ -1126,6 +1210,13 @@ end
 
 --show (or hide) a driver GUI object
 local function SetDriverGUI(Bus, Name, hide)
+	-- First, check if this would actually do anything
+	if LastSetDriverGUICall[Bus] ~= nil and table.unpack(LastSetDriverGUICall[Bus]) == table.unpack({ Name, hide }) then
+		return
+	else
+		LastSetDriverGUICall[Bus] = { Name, hide }
+	end
+	
 	local Driver = GetDriver(Bus)
 	if Driver == nil then
 		return --no driver to show GUIs to
@@ -1451,7 +1542,7 @@ local function Alight(Passenger)
 	local Stop = CurrentStop(Bus)
 	if Stop ~= nil then --as the function can return nil
 		--.p as RandomStopSpawn returns a CFrame
-		MoveTo(Passenger, RandomStopSpawn(Stop).p, true)
+		MoveTo(Passenger, RandomStopSpawn(Stop).p, true, false)
 	end
 	
 	Passenger:Destroy()
@@ -1465,41 +1556,41 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 	local PassengerData = Passenger:FindFirstChild('PassengerData')
 	if PassengerData == nil then
 		Connection:Disconnect() --so the 'ghost passenger' doesn't keep calling
-		return false
+		return false, false
 	elseif PassengerData.CurrentBus.Value ~= nil then
 		Connection:Disconnect()
-		return false --already on a bus
+		return false, false --already on a bus
 	end
 
 	local Driver = Config.GetBusLocation(Bus, 'DrivingSeat').Occupant
-	if not Driver then return false end
+	if not Driver then return false, true end
 
 	local DriverP = Players:GetPlayerFromCharacter(Driver.Parent)
 	if DriverP == nil or DriverP.AIBusPassengers.Enabled.Value == false then 
-		return false --the driver doesn't exist or has AI off
+		return false, true --the driver doesn't exist or has AI off
 	end
 
 	--check route
 	local Route = Config.GetBusLocation(Bus, 'RouteCode')
 	if CanBoard(Passenger, Route.Value) == false then
-		return false
+		return false, true
 	end
 
 	--and check fullness
 	if IsFull(Bus) == true then
-		return false --already full
+		return false, true --already full
 	end
 
 	local PassengerSeat = FindSeat(Bus)
 	if PassengerSeat == nil then
-		return false
+		return false, true
 	end
 
 	--final check on this before we begin
 	if Passenger:FindFirstChild('PassengerData') == nil or Passenger:FindFirstChildOfClass('Humanoid') == nil 
 		or Passenger:FindFirstChild('HumanoidRootPart') == nil then
 		Connection:Disconnect()
-		return false
+		return false, false
 	end
 
 	--otherwise, get on!
@@ -1528,14 +1619,14 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 
 	--wait for the bus to stop, potentially timing out or giving up, and make sure it's still the correct route
 	local WStart = tick()
-
+	
 	while task.wait(0.1) do
 		local QueuePos = table.find(BoardingQueue, Passenger)
 		local Distance = math.abs((OutsideBoardingPoint.Position - Passenger.HumanoidRootPart.Position).Magnitude)
 		local CanBoardRoute = CanBoard(Passenger, Route.Value)
 		local CanMoveToOBP = CanMoveTo(Bus, 'OBP', false, false)
 		local CanMoveToIBP = CanMoveTo(Bus, 'IBP', false, false)
-		
+
 		if CanMoveToIBP == true and CanBoardRoute == true and QueuePos == 3 and
 			(Config.Movement.WaitForAlighters == false or
 				(#Bus.BusData.PassengersAlighting:GetChildren() == 0 and Bus.BusData.BellRung.Value == false)) then
@@ -1556,7 +1647,7 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 				PassengerData.CurrentBus.Value = nil
 				PassengerSeat[1].Taken.Value = nil
 
-				return false	
+				return false, true	
 			end
 
 			if CanMoveToOBP == true then
@@ -1582,14 +1673,14 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 
 	if success == false then --if BoardBus returned false for whatever reason
 		MoveTo(Passenger, OutsideBoardingPoint.Position, true)
-		MoveTo(Passenger, WaitingPoint, false)
+		MoveTo(Passenger, WaitingPoint, false, false)
 
 		PassengerData.WaitingStop.Value = Stop
 		PassengerData.CurrentBus.Value = nil
 		PassengerSeat[1].Taken.Value = nil
 
 		BVal:Destroy()
-		return false
+		return false, false
 	end
 
 	--if we didn't return, set the CurrentBus value & leave the queue and PassengersBoarding list
@@ -1615,17 +1706,26 @@ local function BusArrivedAtStop(Passenger, Stop, Bus, Connection)
 			local RouteTable = Config.Routes[RouteIndexOf(Route.Value)]
 			local closest = true
 
-			if RouteTable == nil then
-				continue -- Can't do this right now
-			end
-
-			for count = 2, #RouteTable do
-				local difference = distance - math.abs((Passenger.HumanoidRootPart.Position - 
-					Config.GetStopLocation(RouteTable[count][1], 'Detector').Position).Magnitude)
-				if difference > 0 then
-					--this stop is closer
-					closest = false
-					break
+			if RouteTable ~= nil then
+				for count = 2, #RouteTable do
+					local difference = distance - math.abs((Passenger.HumanoidRootPart.Position - 
+						Config.GetStopLocation(RouteTable[count][1], 'Detector').Position).Magnitude)
+					if difference > 0 then
+						--this stop is closer
+						closest = false
+						break
+					end
+				end
+			else
+				-- Just use all stops
+				for Stop, _ in ipairs(Config.Stops) do
+					local difference = distance - math.abs((Passenger.HumanoidRootPart.Position - 
+						Config.GetStopLocation(Stop, 'Detector').Position).Magnitude)
+					if difference > 0 then
+						--this stop is closer
+						closest = false
+						break
+					end					
 				end
 			end
 
@@ -1768,11 +1868,12 @@ end
 
 --spawn a passenger at a certain stop to get a certain route (although the latter is only used to choose destination)
 local function SpawnPassenger(Stop, Route)
-	local Passenger =(Avatars[regiLibrary.math_rand(1, #Avatars, 'randomInt')]):Clone() --get a random avatar
+	local Avatar = Avatars[regiLibrary.math_rand(1, #Avatars, 'randomInt')] --get a random avatar
+	local Passenger = Avatar:Clone()
+	
+	-- Load the passenger into workspace
 	Passenger.Parent = game.Workspace.LoadedPassengers
 	Passenger.Name = 'Passenger_' .. tostring(Rnd:NextInteger(1000, 9999))
-
-	--anchor and position
 	AnchorPassenger(Passenger, true)
 	Passenger:SetPrimaryPartCFrame(RandomStopSpawn(Stop))
 
@@ -1814,6 +1915,7 @@ local function SpawnPassenger(Stop, Route)
 
 		if regiLibrary.math_rand(0, 1, 'randomFloat') < AlightingPercentage then
 			Passenger.PassengerData.EndStop.Value = StopArray[1]
+			Passenger.PassengerData.MaxStopCount.Value = (count - StopIndex) * Config.Movement.MaxStopCountMultiplier
 			break --prevent it being overwritten later
 		end
 	end
@@ -1835,7 +1937,8 @@ local function SpawnPassenger(Stop, Route)
 
 		--when a bus has arrived or changed
 		local function CallBusArrived()
-			if BusArrivedAtStop(Passenger, Stop, Bus, Connection) == false then
+			local Success, CanReturn = BusArrivedAtStop(Passenger, Stop, Bus, Connection)
+			if Success == false and CanReturn == true then
 				--wait for the bus to leave, then unregister it so we can retry
 				local Connection2
 				Connection2 = Detector.TouchEnded:Connect(function(hit)
@@ -1885,7 +1988,6 @@ local function SetupBus(Bus)
 
 	regiLibrary.Instantiate('BellSound', 'Sound', BusData).SoundId = Config.Sounds.Bell -- The fourth param is being broken :(
 	local BellRung = regiLibrary.Instantiate('BellRung', 'BoolValue', BusData, { Value = false })
-	local Route = regiLibrary.Instantiate('Route', 'StringValue', BusData)
 	local PassengersBoarding = regiLibrary.Instantiate('PassengersBoarding', 'Folder', BusData)
 	local PassengersAlighting = regiLibrary.Instantiate('PassengersAlighting', 'Folder', BusData)
 
@@ -1949,10 +2051,12 @@ local function SetupBus(Bus)
 			for _, Part in ipairs(Trigger:GetTouchingParts()) do --loop through all parts looking for stops
 				if Part.Name == Config.DetectorName then --if we're touching ANY detector
 					local Stop = Config.GetStopLocation(Part, 'FromDetector')
-					AtStop = IsOnRoute(Stop, Config.GetBusLocation(Bus, 'RouteCode').Value) ~= nil --if the stop's on our route
+					if IsOnRoute(Stop, Config.GetBusLocation(Bus, 'RouteCode').Value) ~= nil then --if the stop's on our route
+						AtStop = true
+						return
+					end
 				end
 			end
-
 		end
 
 		--and set up a connection for correctly parenting the InfoGui
@@ -1979,15 +2083,19 @@ local function SetupBus(Bus)
 						ServedStop = false --but reset this
 					else
 						--check if we're stopped
-						local Stopped = 2 --1 = true, 2 = false (for using the table)
-						if Config.Movement.IBPMovementReq == 'VelocityOnly' then
-							if DSeat.Velocity.Magnitude < Config.Movement.MaxBoardingVelocity then
-								Stopped = 1
-							end
-						else
-							if DoorsOpen.Value == true then
-								Stopped = 1
-							end
+						local BoardingStopped = 2 --1 = true, 2 = false (for using the table)
+						if CanMoveTo(Bus, 'IBP', false, false) == true then
+							BoardingStopped = 1
+						end
+						
+						local AlightingStopped = 2
+						if CanMoveTo(Bus, 'IBP', true, false) == true then
+							AlightingStopped = 1
+						end
+						
+						local BoardingAlightingStopped = 2
+						if BoardingStopped == 1 or AlightingStopped == 1 then
+							BoardingAlightingStopped = 1
 						end
 
 						--now, check for passengers getting on and off
@@ -2010,11 +2118,11 @@ local function SetupBus(Bus)
 						}
 
 						if Boarding == true and Alighting == true then
-							SetDriverGUI(Bus, Guis[1][Stopped])
+							SetDriverGUI(Bus, Guis[1][BoardingAlightingStopped])
 						elseif Boarding == true and Alighting == false then
-							SetDriverGUI(Bus, Guis[2][Stopped])				
+							SetDriverGUI(Bus, Guis[2][BoardingStopped])			
 						elseif Boarding == false and Alighting == true then
-							SetDriverGUI(Bus, Guis[3][Stopped])
+							SetDriverGUI(Bus, Guis[3][AlightingStopped])
 						else
 							if IsFull(Bus) == true then
 								SetDriverGUI(Bus, 'FullLabel')
@@ -2153,6 +2261,7 @@ return function(config)
 			regiLibrary.Instantiate('AtStop', 'BoolValue', PassengerData)
 			regiLibrary.Instantiate('RouteCode', 'StringValue', PassengerData)
 			regiLibrary.Instantiate('EndStop', 'ObjectValue', PassengerData)
+			regiLibrary.Instantiate('MaxStopCount', 'IntValue', PassengerData)
 
 			--delete name tags (not sure if the second line is needed)
 			Humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
@@ -2227,12 +2336,34 @@ return function(config)
 	end
 
 	--finally: manage passenger spawning, WITHOUT coroutines using a simple loop
+	--also, fare stages
 
 	--starting sets of passengers
 	local Spawns = {}
 
 	for _, Route in ipairs(Config.Routes) do
+		-- Create a fare stage dictionary for the route
+		-- Keys are stage names, values are the {first stop index on the route, last}
+		local FareStageTable = {}
+		FareStageTables[Route[1][1]] = FareStageTable
+		
+		local PreviousFareStage = nil
+		
 		for i = 2, #Route do --go through all stops
+			-- Check if this is a new fare stage
+			local Stop = Route[i][1]
+			local FareStage = Config.Stops[Stop][2]
+			
+			if FareStageTable[FareStage] == nil then
+				FareStageTable[FareStage] = {
+					['First'] = i,
+					['Last'] = nil
+				}
+			end
+			
+			-- Set the last stop for this stage whatever
+			FareStageTable[FareStage].Last = i
+			
 			local On = Route[i][2] * CurrentMultiplier(Route[i])
 
 			--mass spawn the first set
