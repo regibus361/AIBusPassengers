@@ -3,7 +3,7 @@
 Parent this to StarterPlayerScripts!
 
 
-Script version:		1.0.12 (19th Dec 2021)
+Script version:		1.0.13 (19th Dec 2021)
 
 This script deals with streaming on the client to reduce lag.
 (It also passes keypresses to the server)
